@@ -14,7 +14,9 @@ Controls:
 """
 
 import os
+import sys
 import time
+import threading
 import urllib.request
 
 import cv2
@@ -125,7 +127,7 @@ def draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (120, 120, 120), 1, cv2.LINE_AA)
 
 
-def main():
+def main(mode: str = "camera"):
     ensure_model()
 
     options = vision.HandLandmarkerOptions(
@@ -159,8 +161,16 @@ def main():
     fps_timer    = time.perf_counter()
     start_time   = time.perf_counter()
 
-    print("AR Hand → Windows Input  |  P=pause  Q=quit")
-    print("Open palm (3+ fingers) to start scrolling.\n")
+    show_window = (mode == "camera")
+    stop_event  = threading.Event()
+
+    if show_window:
+        print("AR Hand → Windows Input  |  P=pause  Q=quit")
+        print("Open palm (3+ fingers) to start scrolling.\n")
+    else:
+        print("AR Hand Control running as background service.")
+        print("Close the stop window or press Ctrl+C to quit.\n")
+        _start_stop_widget(stop_event)
 
     with vision.HandLandmarker.create_from_options(options) as landmarker:
         while cap.isOpened():
@@ -276,22 +286,115 @@ def main():
                 prev_x = prev_y = prev_time = None
                 prev_x = prev_y = prev_size = None
 
-            # Only redraw the window every 2 frames — display is the bottleneck
-            display_tick += 1
-            if display_tick % 2 == 0:
-                draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_states, fps)
-                cv2.imshow("AR Hand Control — Windows", frame)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord('q'), 27):
-                break
-            if key == ord('p'):
-                paused = not paused
-                print("Paused" if paused else "Resumed")
+            if show_window:
+                display_tick += 1
+                if display_tick % 2 == 0:
+                    draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_states, fps)
+                    cv2.imshow("AR Hand Control — Windows", frame)
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord('q'), 27):
+                    break
+                if key == ord('p'):
+                    paused = not paused
+            else:
+                # Service mode — print live status, check stop widget
+                label = "ZOOM" if zoom_active else ("SCROLL" if scroll_active else "idle")
+                print(f"\r[AR] {label:<8} | FPS {fps:4.0f} | {'PAUSED' if paused else 'active'}", end="", flush=True)
+                if stop_event.is_set():
+                    break
+                time.sleep(0.001)
 
     cap.release()
-    cv2.destroyAllWindows()
+    if show_window:
+        cv2.destroyAllWindows()
+    else:
+        print("\nService stopped.")
+
+
+# ── Stop widget (service mode) ─────────────────────────────────────────────────
+
+def _start_stop_widget(stop_event: threading.Event):
+    """Launches a small tkinter stop button in a background thread."""
+    def _run():
+        import tkinter as tk
+        root = tk.Tk()
+        root.title("AR Hand Control")
+        root.geometry("280x110")
+        root.resizable(False, False)
+        root.configure(bg="#0f0f1a")
+        root.attributes("-topmost", True)
+
+        tk.Label(root, text="Service running in background",
+                 bg="#0f0f1a", fg="#aaaaaa",
+                 font=("Segoe UI", 10)).pack(pady=(18, 6))
+
+        tk.Button(root, text="■  Stop Service",
+                  bg="#ff4444", fg="white", activebackground="#cc0000",
+                  font=("Segoe UI", 11, "bold"), width=18, height=1,
+                  relief="flat", cursor="hand2",
+                  command=lambda: (stop_event.set(), root.destroy())
+                  ).pack()
+
+        root.protocol("WM_DELETE_WINDOW",
+                      lambda: (stop_event.set(), root.destroy()))
+        root.mainloop()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+# ── Launch menu ────────────────────────────────────────────────────────────────
+
+def show_menu() -> str | None:
+    """Tkinter launch menu — returns 'camera', 'service', or None if closed."""
+    import tkinter as tk
+
+    chosen = [None]
+
+    root = tk.Tk()
+    root.title("AR Hand Control")
+    root.geometry("400x270")
+    root.resizable(False, False)
+    root.configure(bg="#0f0f1a")
+
+    def pick(mode):
+        chosen[0] = mode
+        root.destroy()
+
+    tk.Label(root, text="AR Hand Control",
+             font=("Segoe UI", 18, "bold"),
+             bg="#0f0f1a", fg="white").pack(pady=(24, 4))
+
+    tk.Label(root, text="Choose how to run",
+             font=("Segoe UI", 10),
+             bg="#0f0f1a", fg="#666").pack(pady=(0, 18))
+
+    # Camera button
+    tk.Button(root, text="🎥   Play with Camera",
+              font=("Segoe UI", 12, "bold"),
+              bg="#4fc3f7", fg="#0f0f1a", activebackground="#29b6f6",
+              width=26, height=2, relief="flat", cursor="hand2",
+              command=lambda: pick("camera")).pack(pady=(0, 4))
+
+    tk.Label(root, text="Live camera feed with hand skeleton overlay",
+             font=("Segoe UI", 8), bg="#0f0f1a", fg="#555").pack()
+
+    # Service button
+    tk.Button(root, text="⚙️   Run as Background Service",
+              font=("Segoe UI", 12, "bold"),
+              bg="#6bcb77", fg="#0f0f1a", activebackground="#57bb65",
+              width=26, height=2, relief="flat", cursor="hand2",
+              command=lambda: pick("service")).pack(pady=(14, 4))
+
+    tk.Label(root, text="No window — gesture control works system-wide",
+             font=("Segoe UI", 8), bg="#0f0f1a", fg="#555").pack()
+
+    root.protocol("WM_DELETE_WINDOW", root.destroy)
+    root.mainloop()
+    return chosen[0]
 
 
 if __name__ == "__main__":
-    main()
+    mode = show_menu()
+    if mode:
+        main(mode=mode)
