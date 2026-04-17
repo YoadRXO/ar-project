@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 echo ============================================
 echo  AR Hand Control - EXE Builder
 echo ============================================
@@ -24,4 +25,5 @@ echo ============================================
 echo  Done!
 echo  Your EXE is at: dist\ARHandControl\ARHandControl.exe
 echo ============================================
+popd
 pause

@@ -58,3 +58,24 @@ ar-project/
         ├── sessions/              # POST /sessions endpoint
         └── main.ts
 ```
+
+## Windows Desktop App (EXE)
+
+Builds a native Windows executable using PyInstaller.
+
+### Build
+
+```bash
+# From WSL terminal, inside ar-windows-input/
+cmd.exe /c "$(wslpath -w "$(pwd)/build.bat")"
+```
+
+Output: `ar-windows-input/dist/ARHandControl/ARHandControl.exe`
+
+### Run
+
+Double-click `ARHandControl.exe` inside `dist/ARHandControl/`. Keep the entire folder together — the exe depends on files alongside it.
+
+### Share
+
+Zip the whole `dist/ARHandControl/` folder and send it. No install required on the recipient's machine.
