@@ -43,7 +43,7 @@ ZOOM_BASELINE_RATE = 0.03
 
 # Pose-based vertical scroll (up/down)
 STRAIGHT_THRESHOLD = 0.12   # curl score above this → fingers flat  → scroll UP
-CURL_THRESHOLD     = 0.03   # curl score below this → fingers bent   → scroll DOWN
+CURL_THRESHOLD     = 0.06   # curl score below this → fingers bent   → scroll DOWN
 
 # Pose-based horizontal scroll (left/right)
 TILT_THRESHOLD     = 0.07   # tilt magnitude above this → scroll LEFT or RIGHT
