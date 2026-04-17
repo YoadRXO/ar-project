@@ -26,7 +26,8 @@ from win_input import scroll_vertical, scroll_horizontal, zoom
 from smoother import PositionSmoother, EMA  # EMA still used for size_smoother
 from gesture import (
     get_extended_fingers, is_scroll_mode, is_zoom_mode, is_fist,
-    get_palm_center, get_two_finger_center, get_hand_size, get_two_finger_curl,
+    get_palm_center, get_two_finger_center, get_hand_size,
+    get_two_finger_curl, get_horizontal_tilt,
     FINGER_CONNECTIONS, FINGER_COLORS_BGR, FINGER_NAMES,
 )
 
@@ -39,9 +40,13 @@ ZOOM_THRESHOLD     = 0.012
 ZOOM_BASELINE_RATE = 0.03
 
 # Pose-based vertical scroll (up/down)
-STRAIGHT_THRESHOLD = 0.12   # curl score above this → fingers flat → scroll UP
-CURL_THRESHOLD     = 0.03   # curl score below this → fingers bent  → scroll DOWN
-SCROLL_POSE_SPEED  = 6      # scroll notches per second while holding pose
+STRAIGHT_THRESHOLD = 0.12   # curl score above this → fingers flat  → scroll UP
+CURL_THRESHOLD     = 0.03   # curl score below this → fingers bent   → scroll DOWN
+
+# Pose-based horizontal scroll (left/right)
+TILT_THRESHOLD     = 0.07   # tilt magnitude above this → scroll LEFT or RIGHT
+
+SCROLL_POSE_SPEED  = 6      # scroll notches per second while holding any pose
 # ─────────────────────────────────────────────────────────────────────────────
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
@@ -144,7 +149,6 @@ def main():
 
     prev_x = prev_y = None
     prev_time = None
-    accum_x = 0.0
     scroll_locked = False
     direction = None
     dir_timer = 0.0
@@ -247,17 +251,19 @@ def main():
                             direction = "down"
                             dir_timer = now
 
-                        # HORIZONTAL — motion based (move hand left/right)
-                        accum_x += vx
-                        if abs(accum_x) >= DEAD_ZONE * 3:
-                            scroll_horizontal(accum_x * SCROLL_H_SPEED)
-                            direction = "right" if accum_x > 0 else "left"
+                        # HORIZONTAL — pose based (tilt fingers left or right)
+                        tilt = get_horizontal_tilt(lm)
+                        if tilt < -TILT_THRESHOLD:
+                            scroll_horizontal(-SCROLL_POSE_SPEED * dt)   # tilt left on screen → scroll right
+                            direction = "right"
                             dir_timer = now
-                            accum_x = 0.0
+                        elif tilt > TILT_THRESHOLD:
+                            scroll_horizontal(SCROLL_POSE_SPEED * dt)    # tilt right on screen → scroll left
+                            direction = "left"
+                            dir_timer = now
 
                     else:
                         size_baseline = None
-                        accum_x = 0.0
 
                 prev_x, prev_y = sx, sy
                 prev_time = now
@@ -267,7 +273,6 @@ def main():
                 size_smoother.reset()
                 size_baseline = None
                 scroll_locked = False
-                accum_x = 0.0
                 prev_x = prev_y = prev_time = None
                 prev_x = prev_y = prev_size = None
 

@@ -47,6 +47,18 @@ def get_two_finger_center(lm):
     )
 
 
+def get_horizontal_tilt(lm) -> float:
+    """
+    Horizontal tilt of index + middle fingers.
+    Negative = tips lean LEFT  on the displayed (mirrored) frame → scroll RIGHT
+    Positive = tips lean RIGHT on the displayed (mirrored) frame → scroll LEFT
+    (frame is flipped before MediaPipe, so x-axis is already selfie-mirrored)
+    """
+    index_tilt  = lm[8].x  - lm[5].x    # index  tip.x  - MCP.x
+    middle_tilt = lm[12].x - lm[9].x    # middle tip.x  - MCP.x
+    return (index_tilt + middle_tilt) / 2
+
+
 def get_two_finger_curl(lm) -> float:
     """
     Curl score for index + middle fingers.
