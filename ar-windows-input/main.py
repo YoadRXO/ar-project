@@ -65,6 +65,36 @@ def ensure_model():
         print("Download complete.\n")
 
 
+def _make_landmarker_options():
+    return vision.HandLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
+        running_mode=vision.RunningMode.VIDEO,
+        num_hands=1,
+        min_hand_detection_confidence=0.5,
+        min_hand_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
+
+# Pre-load model in background as soon as the script starts so it's
+# ready by the time the user clicks a menu button.
+_preload_done  = threading.Event()
+_preload_error = [None]
+
+def _preload_model():
+    try:
+        ensure_model()
+        # Warm up the landmarker (first creation loads weights into memory)
+        tmp = vision.HandLandmarker.create_from_options(_make_landmarker_options())
+        tmp.close()
+    except Exception as e:
+        _preload_error[0] = e
+    finally:
+        _preload_done.set()
+
+threading.Thread(target=_preload_model, daemon=True).start()
+
+
 def draw_skeleton(frame, lm, h, w):
     tips = {4, 8, 12, 16, 20}
     for connections, color in zip(FINGER_CONNECTIONS, FINGER_COLORS_BGR):
@@ -128,17 +158,15 @@ def draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_
 
 
 def main(mode: str = "camera"):
-    ensure_model()
+    # Wait for background preload (usually already done by the time user clicks)
+    if not _preload_done.wait(timeout=30):
+        print("Model load timed out.")
+        return
+    if _preload_error[0]:
+        print(f"Model load failed: {_preload_error[0]}")
+        return
 
-    options = vision.HandLandmarkerOptions(
-        base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
-        running_mode=vision.RunningMode.VIDEO,
-        num_hands=1,
-        min_hand_detection_confidence=0.5,
-        min_hand_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
-        # model_complexity is not exposed in tasks API — uses lite model via float16
-    )
+    options = _make_landmarker_options()
 
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
@@ -365,9 +393,19 @@ def show_menu() -> str | None:
              font=("Segoe UI", 18, "bold"),
              bg="#0f0f1a", fg="white").pack(pady=(24, 4))
 
-    tk.Label(root, text="Choose how to run",
-             font=("Segoe UI", 10),
-             bg="#0f0f1a", fg="#666").pack(pady=(0, 18))
+    status_var = tk.StringVar(value="⏳  Loading model…")
+    status_lbl = tk.Label(root, textvariable=status_var,
+                          font=("Segoe UI", 9),
+                          bg="#0f0f1a", fg="#888")
+    status_lbl.pack(pady=(0, 14))
+
+    def _poll_ready():
+        if _preload_done.is_set():
+            status_var.set("✓  Ready")
+            status_lbl.config(fg="#6bcb77")
+        else:
+            root.after(200, _poll_ready)
+    root.after(200, _poll_ready)
 
     # Camera button
     tk.Button(root, text="🎥   Play with Camera",
