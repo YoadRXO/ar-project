@@ -76,17 +76,26 @@ def _make_landmarker_options():
     )
 
 
-# Pre-load model in background as soon as the script starts so it's
-# ready by the time the user clicks a menu button.
-_preload_done  = threading.Event()
-_preload_error = [None]
+# Pre-load everything in background the moment the script starts.
+# Both the landmarker AND the camera are ready before the user clicks.
+_preload_done       = threading.Event()
+_preload_error      = [None]
+_preloaded_landmarker = [None]
+_preloaded_cap        = [None]
 
 def _preload_model():
     try:
         ensure_model()
-        # Warm up the landmarker (first creation loads weights into memory)
-        tmp = vision.HandLandmarker.create_from_options(_make_landmarker_options())
-        tmp.close()
+        # Keep landmarker alive — reused directly in main(), no second init
+        _preloaded_landmarker[0] = vision.HandLandmarker.create_from_options(
+            _make_landmarker_options()
+        )
+        # Open camera early so the first frame is instant
+        cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  320)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+        cap.set(cv2.CAP_PROP_FPS, 60)
+        _preloaded_cap[0] = cap
     except Exception as e:
         _preload_error[0] = e
     finally:
@@ -166,12 +175,9 @@ def main(mode: str = "camera"):
         print(f"Model load failed: {_preload_error[0]}")
         return
 
-    options = _make_landmarker_options()
-
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-    cap.set(cv2.CAP_PROP_FPS, 60)
+    # Reuse the already-created instances — zero wait
+    landmarker = _preloaded_landmarker[0]
+    cap        = _preloaded_cap[0]
 
     pos_smoother  = PositionSmoother(alpha=0.9)   # near-instant response
     size_smoother = EMA(0.2)
@@ -200,8 +206,7 @@ def main(mode: str = "camera"):
         print("Close the stop window or press Ctrl+C to quit.\n")
         _start_stop_widget(stop_event)
 
-    with vision.HandLandmarker.create_from_options(options) as landmarker:
-        while cap.isOpened():
+    while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
@@ -312,7 +317,6 @@ def main(mode: str = "camera"):
                 size_baseline = None
                 scroll_locked = False
                 prev_x = prev_y = prev_time = None
-                prev_x = prev_y = prev_size = None
 
             if show_window:
                 display_tick += 1
@@ -333,6 +337,7 @@ def main(mode: str = "camera"):
                 time.sleep(0.001)
 
     cap.release()
+    landmarker.close()
     if show_window:
         cv2.destroyAllWindows()
     else:
