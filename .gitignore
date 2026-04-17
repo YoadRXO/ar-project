@@ -21,6 +21,9 @@ ar-windows-input/hand_landmarker.task
 # ── Build outputs ─────────────────────────────────────────────────────────────
 ar-hand-app/dist/
 ar-backend/dist/
+ar-windows-input/dist/
+ar-windows-input/build/
+ar-windows-input/*.spec
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
