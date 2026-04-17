@@ -54,13 +54,6 @@ Same two-finger pose as above, but tilt the fingers sideways:
 
 Close your hand into a **fist**. All gesture control stops until you open your hand again.
 
-## Controls
-
-| Key | Action |
-|---|---|
-| `P` | Pause / Resume |
-| `Q` or `Esc` | Quit |
-
 ## Tips
 
 - Keep your hand visible and centered in the camera frame
