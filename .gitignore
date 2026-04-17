@@ -1,0 +1,39 @@
+# ── Node / npm ────────────────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+*.local
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+
+# ── MediaPipe model (downloaded at runtime) ───────────────────────────────────
+ar-windows-input/hand_landmarker.task
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+ar-hand-app/dist/
+ar-backend/dist/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
