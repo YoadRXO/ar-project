@@ -16,6 +16,8 @@ Controls:
 import os
 import sys
 import time
+import shutil
+import tempfile
 import threading
 import urllib.request
 
@@ -65,9 +67,21 @@ def ensure_model():
         print("Download complete.\n")
 
 
+def _get_fast_model_path() -> str:
+    """
+    python.exe is a Windows process — reading the model from the WSL
+    filesystem (\\wsl.localhost\\...) is slow virtual I/O.
+    Copy it to the Windows TEMP folder once so it loads from native NTFS.
+    """
+    tmp = os.path.join(tempfile.gettempdir(), "ar_hand_landmarker.task")
+    if not os.path.exists(tmp):
+        shutil.copy2(MODEL_PATH, tmp)
+    return tmp
+
+
 def _make_landmarker_options():
     return vision.HandLandmarkerOptions(
-        base_options=mp_python.BaseOptions(model_asset_path=MODEL_PATH),
+        base_options=mp_python.BaseOptions(model_asset_path=_get_fast_model_path()),
         running_mode=vision.RunningMode.VIDEO,
         num_hands=1,
         min_hand_detection_confidence=0.5,
