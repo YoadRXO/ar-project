@@ -32,6 +32,14 @@ def is_mouse_mode(lm) -> bool:
     return index_up and middle_dn and ring_dn and pinky_dn
 
 
+def is_pinch(lm) -> bool:
+    """Thumb tip and index tip close together — right-click trigger."""
+    dx = lm[4].x - lm[8].x
+    dy = lm[4].y - lm[8].y
+    dist = math.sqrt(dx * dx + dy * dy)
+    return (dist / get_hand_size(lm)) < 0.35
+
+
 def is_zoom_mode(lm) -> bool:
     """All 4 fingers extended (open palm) → zoom only."""
     s = get_extended_fingers(lm)
