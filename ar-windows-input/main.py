@@ -26,7 +26,7 @@ import mediapipe as mp
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
-from win_input import scroll_vertical, scroll_horizontal, zoom, move_mouse, right_click, get_screen_size
+from win_input import scroll_vertical, scroll_horizontal, zoom, move_mouse, left_click, right_click, get_screen_size
 from smoother import PositionSmoother, EMA  # EMA still used for size_smoother
 from gesture import (
     get_extended_fingers, is_scroll_mode, is_zoom_mode, is_fist, is_mouse_mode, is_pinch,
@@ -169,6 +169,7 @@ def draw_hud(frame, h, w, zoom_active, scroll_active, mouse_active, paused, dire
         "up": "^ UP", "down": "v DOWN",
         "left": "< LEFT", "right": "> RIGHT",
         "zoom_in": "+ ZOOM IN", "zoom_out": "- ZOOM OUT",
+        "left_click":  "[ LEFT CLICK ]",
         "right_click": "[ RIGHT CLICK ]",
     }
     if direction:
@@ -214,7 +215,9 @@ def main(mode: str = "camera"):
     prev_x = prev_y = None
     prev_time = None
     scroll_locked = False
-    pinch_ready   = True    # True = a right-click can fire on next pinch
+    was_pointing  = False   # True while/just-after index was extended in mouse mode
+    pinch_ready   = True    # arms right-click; resets when pinch is released
+    click_ready   = True    # arms left-click;  resets when claw is released
     mouse_active  = False
     direction = None
     dir_timer = 0.0
@@ -283,8 +286,11 @@ def main(mode: str = "camera"):
                 gesture_armed = (clear_field_count >= CLEAR_FIELD_FRAMES)
 
                 # Mouse mode: only index finger extended → cursor follows fingertip.
-                # Pinch (thumb meets index) → right-click once per pinch.
-                mouse_active = is_mouse_mode(lm)
+                # Claw (fold to fist from mouse mode) → left-click once per fold.
+                # Pinch (thumb meets index tip) → right-click once per pinch.
+                pointing_now = is_mouse_mode(lm)
+                claw_now     = was_pointing and is_fist(lm)
+                mouse_active = pointing_now or claw_now
 
                 # Mouse mode takes priority — skip scroll/zoom when active.
                 if not mouse_active:
@@ -310,8 +316,10 @@ def main(mode: str = "camera"):
                     vx = vy = 0.0
 
                 if not paused and gesture_armed:
-                    # ── INDEX ONLY → Mouse pointer / pinch right-click ─────
-                    if mouse_active:
+                    # ── INDEX ONLY → Mouse pointer ─────────────────────────
+                    if pointing_now:
+                        was_pointing = True
+                        click_ready  = True   # re-arm left-click when index extends
                         if is_pinch(lm):
                             if pinch_ready:
                                 right_click()
@@ -323,8 +331,17 @@ def main(mode: str = "camera"):
                             mx, my = mouse_smoother.update(lm[8].x, lm[8].y)
                             move_mouse(int(mx * screen_w), int(my * screen_h))
 
+                    # ── CLAW (fold to fist from mouse mode) → Left-click ───
+                    elif claw_now:
+                        if click_ready:
+                            left_click()
+                            click_ready = False
+                            direction   = "left_click"
+                            dir_timer   = now
+
                     # ── OPEN PALM → Zoom only ──────────────────────────────
                     elif zoom_active:
+                        was_pointing = False
                         if size_baseline is None:
                             size_baseline = cur_size
                         size_baseline += ZOOM_BASELINE_RATE * (cur_size - size_baseline)
@@ -337,6 +354,7 @@ def main(mode: str = "camera"):
 
                     # ── INDEX + MIDDLE → Scroll X/Y only ──────────────────
                     elif scroll_active:
+                        was_pointing  = False
                         size_baseline = None
                         dt = (now - prev_time) if prev_time else 0.0
 
@@ -365,11 +383,14 @@ def main(mode: str = "camera"):
                             dir_timer = now
 
                     else:
+                        was_pointing  = False
                         size_baseline = None
 
                 else:
                     # Not armed (hand near face) or paused — reset state
+                    was_pointing  = False
                     pinch_ready   = True
+                    click_ready   = True
                     size_baseline = None
 
                 prev_x, prev_y = sx, sy
@@ -381,7 +402,9 @@ def main(mode: str = "camera"):
                 mouse_smoother.reset()
                 size_baseline = None
                 scroll_locked = False
+                was_pointing  = False
                 pinch_ready   = True
+                click_ready   = True
                 mouse_active  = False
                 clear_field_count = 0
                 prev_x = prev_y = prev_time = None

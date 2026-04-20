@@ -8,6 +8,8 @@ _user32 = ctypes.windll.user32
 
 MOUSEEVENTF_WHEEL      = 0x0800
 MOUSEEVENTF_HWHEEL     = 0x1000
+MOUSEEVENTF_LEFTDOWN   = 0x0002
+MOUSEEVENTF_LEFTUP     = 0x0004
 MOUSEEVENTF_RIGHTDOWN  = 0x0008
 MOUSEEVENTF_RIGHTUP    = 0x0010
 VK_CONTROL             = 0x11
@@ -28,6 +30,12 @@ def get_screen_size() -> tuple[int, int]:
 def move_mouse(x: int, y: int) -> None:
     """Move cursor to absolute screen pixel position."""
     _user32.SetCursorPos(x, y)
+
+
+def left_click() -> None:
+    """Fire a left-click at the current cursor position."""
+    _mouse_event(MOUSEEVENTF_LEFTDOWN, 0)
+    _mouse_event(MOUSEEVENTF_LEFTUP,   0)
 
 
 def right_click() -> None:
