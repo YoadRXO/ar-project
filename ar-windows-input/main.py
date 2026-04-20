@@ -51,6 +51,10 @@ CURL_THRESHOLD     = 0.06   # curl score below this → fingers bent   → scrol
 TILT_THRESHOLD     = 0.07   # tilt magnitude above this → scroll LEFT or RIGHT
 
 SCROLL_POSE_SPEED  = 6      # scroll notches per second while holding any pose
+
+# Clear-field guard — prevents face-touch (nose/ear scratch) from firing gestures
+CLEAR_ZONE_Y_MIN   = 0.25   # palm center y must be BELOW top 25% of frame (face zone)
+CLEAR_FIELD_FRAMES = 8      # consecutive frames in clear zone before gestures arm
 # ─────────────────────────────────────────────────────────────────────────────
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
@@ -137,9 +141,11 @@ def draw_skeleton(frame, lm, h, w):
             cv2.circle(frame, (px, py), 4, (220, 220, 220), -1, cv2.LINE_AA)
 
 
-def draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_states, fps):
+def draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_states, fps, armed=True):
     if paused:
         label, color = "PAUSED", (60, 60, 60)
+    elif not armed:
+        label, color = "hand near face...", (40, 40, 120)
     elif zoom_active:
         label, color = "ZOOM  (open palm)", (200, 140, 0)
     elif scroll_active:
@@ -203,6 +209,7 @@ def main(mode: str = "camera"):
     direction = None
     dir_timer = 0.0
     paused = False
+    clear_field_count = 0   # frames hand has been in the clear zone
     fps = 0.0
     frame_count  = 0
     display_tick = 0
@@ -256,6 +263,15 @@ def main(mode: str = "camera"):
                 finger_states = get_extended_fingers(lm)
                 zoom_active   = is_zoom_mode(lm)
 
+                # Clear-field guard: require palm to be away from the face zone
+                # and stable there for several frames before arming gestures.
+                _, palm_cy = get_palm_center(lm)
+                if palm_cy > CLEAR_ZONE_Y_MIN:
+                    clear_field_count = min(clear_field_count + 1, CLEAR_FIELD_FRAMES)
+                else:
+                    clear_field_count = 0
+                gesture_armed = (clear_field_count >= CLEAR_FIELD_FRAMES)
+
                 # Hysteresis: enter scroll mode on 2-finger gesture,
                 # exit only when a clearly different gesture is made
                 if is_scroll_mode(lm):
@@ -277,7 +293,7 @@ def main(mode: str = "camera"):
                 else:
                     vx = vy = 0.0
 
-                if not paused:
+                if not paused and gesture_armed:
                     # ── OPEN PALM → Zoom only ──────────────────────────────
                     if zoom_active:
                         if size_baseline is None:
@@ -322,6 +338,11 @@ def main(mode: str = "camera"):
                     else:
                         size_baseline = None
 
+                else:
+                    # Not armed (hand near face) — reset baseline so zoom
+                    # doesn't fire with stale reference when arm kicks in
+                    size_baseline = None
+
                 prev_x, prev_y = sx, sy
                 prev_time = now
 
@@ -330,12 +351,15 @@ def main(mode: str = "camera"):
                 size_smoother.reset()
                 size_baseline = None
                 scroll_locked = False
+                clear_field_count = 0
                 prev_x = prev_y = prev_time = None
+
+            armed = lm is not None and clear_field_count >= CLEAR_FIELD_FRAMES
 
             if show_window:
                 display_tick += 1
                 if display_tick % 2 == 0:
-                    draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_states, fps)
+                    draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_states, fps, armed=armed)
                     cv2.imshow("AR Hand Control — Windows", frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord('q'), 27):
@@ -344,8 +368,11 @@ def main(mode: str = "camera"):
                     paused = not paused
             else:
                 # Service mode — print live status, check stop widget
-                label = "ZOOM" if zoom_active else ("SCROLL" if scroll_active else "idle")
-                print(f"\r[AR] {label:<8} | FPS {fps:4.0f} | {'PAUSED' if paused else 'active'}", end="", flush=True)
+                if not armed and lm is not None:
+                    label = "near face"
+                else:
+                    label = "ZOOM" if zoom_active else ("SCROLL" if scroll_active else "idle")
+                print(f"\r[AR] {label:<10} | FPS {fps:4.0f} | {'PAUSED' if paused else 'active'}", end="", flush=True)
                 if stop_event.is_set():
                     break
                 time.sleep(0.001)
