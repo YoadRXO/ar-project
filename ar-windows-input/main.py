@@ -58,7 +58,7 @@ CLEAR_FIELD_FRAMES = 8      # consecutive frames in clear zone before gestures a
 
 # Mouse / pointer mode (index finger only)
 MOUSE_SMOOTH            = 0.35  # EMA alpha for cursor — higher = more responsive
-MOUSE_MODE_MIN_FRAMES   = 5    # consecutive frames of mouse gesture before mode activates
+MOUSE_MODE_MIN_FRAMES   = 3    # consecutive frames of mouse gesture before mode activates
 RIGHT_PINCH_MIN_FRAMES  = 3    # consecutive frames middle-pinch must be held before firing
 MOUSE_MARGIN_X  = 0.20  # fraction of frame ignored on each side (left/right)
 MOUSE_MARGIN_Y  = 0.20  # fraction of frame ignored on top/bottom
@@ -103,30 +103,32 @@ def _make_landmarker_options():
     )
 
 
-# Pre-load everything in background the moment the script starts.
-# Both the landmarker AND the camera are ready before the user clicks.
-_preload_done       = threading.Event()
-_preload_error      = [None]
+# Pre-load the landmarker model in background so it's ready before the user clicks.
+_preload_done         = threading.Event()
+_preload_error        = [None]
 _preloaded_landmarker = [None]
-_preloaded_cap        = [None]
 
 def _preload_model():
     try:
         ensure_model()
-        # Keep landmarker alive — reused directly in main(), no second init
         _preloaded_landmarker[0] = vision.HandLandmarker.create_from_options(
             _make_landmarker_options()
         )
-        # Open camera early so the first frame is instant
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  320)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-        cap.set(cv2.CAP_PROP_FPS, 60)
-        _preloaded_cap[0] = cap
     except Exception as e:
         _preload_error[0] = e
     finally:
         _preload_done.set()
+
+
+def _get_available_cameras(max_index: int = 5) -> list[int]:
+    """Return indices of cameras that OpenCV can open."""
+    available = []
+    for i in range(max_index):
+        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+        if cap.isOpened():
+            available.append(i)
+            cap.release()
+    return available or [0]   # always return at least index 0 as fallback
 
 threading.Thread(target=_preload_model, daemon=True).start()
 
@@ -199,7 +201,7 @@ def draw_hud(frame, h, w, zoom_active, scroll_active, mouse_active, paused, dire
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (120, 120, 120), 1, cv2.LINE_AA)
 
 
-def main(mode: str = "camera"):
+def main(mode: str = "camera", cam_index: int = 0):
     # Wait for background preload (usually already done by the time user clicks)
     if not _preload_done.wait(timeout=30):
         print("Model load timed out.")
@@ -208,9 +210,15 @@ def main(mode: str = "camera"):
         print(f"Model load failed: {_preload_error[0]}")
         return
 
-    # Reuse the already-created instances — zero wait
     landmarker = _preloaded_landmarker[0]
-    cap        = _preloaded_cap[0]
+
+    cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  320)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+    cap.set(cv2.CAP_PROP_FPS, 60)
+    if not cap.isOpened():
+        print(f"Failed to open camera {cam_index}.")
+        return
 
     pos_smoother   = PositionSmoother(alpha=0.9)   # near-instant response
     size_smoother  = EMA(0.2)
@@ -221,6 +229,7 @@ def main(mode: str = "camera"):
     prev_x = prev_y = None
     prev_time = None
     scroll_locked        = False
+    mouse_locked         = False  # stays True once entered; exits only on clear other gesture
     mouse_mode_count     = 0      # consecutive frames is_mouse_mode is True
     left_pinch_ready     = True   # arms left-click;  resets when pinch releases
     right_pinch_ready    = True   # arms right-click; resets when middle-pinch releases
@@ -292,14 +301,18 @@ def main(mode: str = "camera"):
                     clear_field_count = 0
                 gesture_armed = (clear_field_count >= CLEAR_FIELD_FRAMES)
 
-                # Mouse mode: only index finger extended → cursor follows fingertip.
-                # Debounce: must hold the gesture for MOUSE_MODE_MIN_FRAMES before
-                # activating, so brief dips during scroll tilt don't hijack the mode.
+                # Mouse mode with hysteresis:
+                # - Enter after MOUSE_MODE_MIN_FRAMES consecutive frames of the gesture
+                # - Exit ONLY on a definitive different gesture (scroll/zoom/fist)
+                # - Brief dips during movement keep the mode active (no stutter)
                 if is_mouse_mode(lm):
                     mouse_mode_count = min(mouse_mode_count + 1, MOUSE_MODE_MIN_FRAMES)
-                else:
+                    if mouse_mode_count >= MOUSE_MODE_MIN_FRAMES:
+                        mouse_locked = True
+                elif mouse_locked and (is_scroll_mode(lm) or zoom_active or is_fist(lm)):
+                    mouse_locked     = False
                     mouse_mode_count = 0
-                mouse_active = (mouse_mode_count >= MOUSE_MODE_MIN_FRAMES)
+                mouse_active = mouse_locked
 
                 # Mouse mode takes priority — skip scroll/zoom when active.
                 if not mouse_active:
@@ -406,6 +419,7 @@ def main(mode: str = "camera"):
 
                 else:
                     # Not armed (hand near face) or paused — reset state
+                    mouse_locked      = False
                     mouse_mode_count  = 0
                     left_pinch_ready  = True
                     right_pinch_ready = True
@@ -421,6 +435,7 @@ def main(mode: str = "camera"):
                 mouse_smoother.reset()
                 size_baseline = None
                 scroll_locked     = False
+                mouse_locked      = False
                 mouse_mode_count  = 0
                 left_pinch_ready  = True
                 right_pinch_ready = True
@@ -496,31 +511,40 @@ def _start_stop_widget(stop_event: threading.Event):
 
 # ── Launch menu ────────────────────────────────────────────────────────────────
 
-def show_menu() -> str | None:
-    """Tkinter launch menu — returns 'camera', 'service', or None if closed."""
+def show_menu() -> tuple[str | None, int]:
+    """Tkinter launch menu — returns (mode, cam_index) or (None, 0) if closed."""
     import tkinter as tk
+    from tkinter import ttk
 
-    chosen = [None]
+    chosen_mode = [None]
+    chosen_cam  = [0]
+
+    # Detect available cameras while the window is building
+    cam_indices = _get_available_cameras()
+    cam_labels  = [f"Camera {i}" for i in cam_indices]
 
     root = tk.Tk()
     root.title("AR Hand Control")
-    root.geometry("400x270")
+    root.geometry("400x330")
     root.resizable(False, False)
     root.configure(bg="#0f0f1a")
 
     def pick(mode):
-        chosen[0] = mode
+        sel = cam_var.get()
+        if sel in cam_labels:
+            chosen_cam[0] = cam_indices[cam_labels.index(sel)]
+        chosen_mode[0] = mode
         root.destroy()
 
     tk.Label(root, text="AR Hand Control",
              font=("Segoe UI", 18, "bold"),
-             bg="#0f0f1a", fg="white").pack(pady=(24, 4))
+             bg="#0f0f1a", fg="white").pack(pady=(20, 2))
 
     status_var = tk.StringVar(value="⏳  Loading model…")
     status_lbl = tk.Label(root, textvariable=status_var,
                           font=("Segoe UI", 9),
                           bg="#0f0f1a", fg="#888")
-    status_lbl.pack(pady=(0, 14))
+    status_lbl.pack(pady=(0, 10))
 
     def _poll_ready():
         if _preload_done.is_set():
@@ -529,6 +553,25 @@ def show_menu() -> str | None:
         else:
             root.after(200, _poll_ready)
     root.after(200, _poll_ready)
+
+    # ── Camera selector ───────────────────────────────────────────────────────
+    cam_frame = tk.Frame(root, bg="#0f0f1a")
+    cam_frame.pack(pady=(0, 12))
+
+    tk.Label(cam_frame, text="Camera:", font=("Segoe UI", 10),
+             bg="#0f0f1a", fg="#aaaaaa").pack(side="left", padx=(0, 8))
+
+    cam_var = tk.StringVar(value=cam_labels[0] if cam_labels else "Camera 0")
+    cam_menu = ttk.Combobox(cam_frame, textvariable=cam_var,
+                            values=cam_labels, state="readonly", width=14,
+                            font=("Segoe UI", 10))
+    cam_menu.pack(side="left")
+
+    style = ttk.Style()
+    style.theme_use("default")
+    style.configure("TCombobox", fieldbackground="#1a1a2e", background="#1a1a2e",
+                    foreground="white", selectbackground="#4fc3f7")
+    # ─────────────────────────────────────────────────────────────────────────
 
     # Camera button
     tk.Button(root, text="🎥   Play with Camera",
@@ -545,17 +588,17 @@ def show_menu() -> str | None:
               font=("Segoe UI", 12, "bold"),
               bg="#6bcb77", fg="#0f0f1a", activebackground="#57bb65",
               width=26, height=2, relief="flat", cursor="hand2",
-              command=lambda: pick("service")).pack(pady=(14, 4))
+              command=lambda: pick("service")).pack(pady=(12, 4))
 
     tk.Label(root, text="No window — gesture control works system-wide",
              font=("Segoe UI", 8), bg="#0f0f1a", fg="#555").pack()
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.mainloop()
-    return chosen[0]
+    return chosen_mode[0], chosen_cam[0]
 
 
 if __name__ == "__main__":
-    mode = show_menu()
+    mode, cam_index = show_menu()
     if mode:
-        main(mode=mode)
+        main(mode=mode, cam_index=cam_index)
