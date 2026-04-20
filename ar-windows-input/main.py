@@ -26,10 +26,10 @@ import mediapipe as mp
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
-from win_input import scroll_vertical, scroll_horizontal, zoom
+from win_input import scroll_vertical, scroll_horizontal, zoom, move_mouse, right_click, get_screen_size
 from smoother import PositionSmoother, EMA  # EMA still used for size_smoother
 from gesture import (
-    get_extended_fingers, is_scroll_mode, is_zoom_mode, is_fist,
+    get_extended_fingers, is_scroll_mode, is_zoom_mode, is_fist, is_mouse_mode,
     get_palm_center, get_two_finger_center, get_hand_size,
     get_two_finger_curl, get_horizontal_tilt,
     FINGER_CONNECTIONS, FINGER_COLORS_BGR, FINGER_NAMES,
@@ -55,6 +55,9 @@ SCROLL_POSE_SPEED  = 6      # scroll notches per second while holding any pose
 # Clear-field guard — prevents face-touch (nose/ear scratch) from firing gestures
 CLEAR_ZONE_Y_MIN   = 0.25   # palm center y must be BELOW top 25% of frame (face zone)
 CLEAR_FIELD_FRAMES = 8      # consecutive frames in clear zone before gestures arm
+
+# Mouse / pointer mode (index finger only)
+MOUSE_SMOOTH       = 0.35   # EMA alpha for cursor — higher = more responsive
 # ─────────────────────────────────────────────────────────────────────────────
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
@@ -141,11 +144,13 @@ def draw_skeleton(frame, lm, h, w):
             cv2.circle(frame, (px, py), 4, (220, 220, 220), -1, cv2.LINE_AA)
 
 
-def draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_states, fps, armed=True):
+def draw_hud(frame, h, w, zoom_active, scroll_active, mouse_active, paused, direction, finger_states, fps, armed=True):
     if paused:
         label, color = "PAUSED", (60, 60, 60)
     elif not armed:
         label, color = "hand near face...", (40, 40, 120)
+    elif mouse_active:
+        label, color = "MOUSE  (1 finger)", (180, 80, 220)
     elif zoom_active:
         label, color = "ZOOM  (open palm)", (200, 140, 0)
     elif scroll_active:
@@ -164,6 +169,7 @@ def draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_
         "up": "^ UP", "down": "v DOWN",
         "left": "< LEFT", "right": "> RIGHT",
         "zoom_in": "+ ZOOM IN", "zoom_out": "- ZOOM OUT",
+        "right_click": "[ RIGHT CLICK ]",
     }
     if direction:
         text = arrows.get(direction, direction)
@@ -199,13 +205,18 @@ def main(mode: str = "camera"):
     landmarker = _preloaded_landmarker[0]
     cap        = _preloaded_cap[0]
 
-    pos_smoother  = PositionSmoother(alpha=0.9)   # near-instant response
-    size_smoother = EMA(0.2)
-    size_baseline = None       # slow-moving reference size for zoom detection
+    pos_smoother   = PositionSmoother(alpha=0.9)   # near-instant response
+    size_smoother  = EMA(0.2)
+    mouse_smoother = PositionSmoother(alpha=MOUSE_SMOOTH)
+    size_baseline  = None       # slow-moving reference size for zoom detection
+    screen_w, screen_h = get_screen_size()
 
     prev_x = prev_y = None
     prev_time = None
     scroll_locked = False
+    was_pointing  = False   # True when last frame was in mouse mode
+    claw_ready    = True    # True = a right-click can fire on next claw
+    mouse_active  = False
     direction = None
     dir_timer = 0.0
     paused = False
@@ -272,13 +283,23 @@ def main(mode: str = "camera"):
                     clear_field_count = 0
                 gesture_armed = (clear_field_count >= CLEAR_FIELD_FRAMES)
 
+                # Mouse mode: only index finger extended → cursor follows fingertip.
+                # Claw: fold index while in mouse mode → one right-click per fold.
+                pointing_now = is_mouse_mode(lm)
+                claw_now     = was_pointing and is_fist(lm)
+                mouse_active = pointing_now or claw_now
+
                 # Hysteresis: enter scroll mode on 2-finger gesture,
-                # exit only when a clearly different gesture is made
-                if is_scroll_mode(lm):
-                    scroll_locked = True
-                elif zoom_active or is_fist(lm):
+                # exit only when a clearly different gesture is made.
+                # Mouse mode takes priority — skip scroll/zoom when mouse is active.
+                if not mouse_active:
+                    if is_scroll_mode(lm):
+                        scroll_locked = True
+                    elif zoom_active or is_fist(lm):
+                        scroll_locked = False
+                else:
                     scroll_locked = False
-                scroll_active = scroll_locked and not zoom_active
+                scroll_active = scroll_locked and not zoom_active and not mouse_active
 
                 raw_size = get_hand_size(lm)
                 cur_size = size_smoother.update(raw_size)
@@ -294,8 +315,24 @@ def main(mode: str = "camera"):
                     vx = vy = 0.0
 
                 if not paused and gesture_armed:
+                    # ── INDEX ONLY → Mouse pointer ─────────────────────────
+                    if pointing_now:
+                        was_pointing = True
+                        claw_ready   = True
+                        mx, my = mouse_smoother.update(lm[8].x, lm[8].y)
+                        move_mouse(int(mx * screen_w), int(my * screen_h))
+
+                    # ── CLAW (fold index while pointing) → Right-click ─────
+                    elif claw_now:
+                        if claw_ready:
+                            right_click()
+                            claw_ready = False
+                            direction  = "right_click"
+                            dir_timer  = now
+
                     # ── OPEN PALM → Zoom only ──────────────────────────────
-                    if zoom_active:
+                    elif zoom_active:
+                        was_pointing = False
                         if size_baseline is None:
                             size_baseline = cur_size
                         size_baseline += ZOOM_BASELINE_RATE * (cur_size - size_baseline)
@@ -308,6 +345,7 @@ def main(mode: str = "camera"):
 
                     # ── INDEX + MIDDLE → Scroll X/Y only ──────────────────
                     elif scroll_active:
+                        was_pointing  = False
                         size_baseline = None
                         dt = (now - prev_time) if prev_time else 0.0
 
@@ -336,11 +374,13 @@ def main(mode: str = "camera"):
                             dir_timer = now
 
                     else:
+                        was_pointing  = False
                         size_baseline = None
 
                 else:
-                    # Not armed (hand near face) — reset baseline so zoom
-                    # doesn't fire with stale reference when arm kicks in
+                    # Not armed (hand near face) or paused — reset state
+                    was_pointing  = False
+                    claw_ready    = True
                     size_baseline = None
 
                 prev_x, prev_y = sx, sy
@@ -349,8 +389,12 @@ def main(mode: str = "camera"):
             else:
                 pos_smoother.reset()
                 size_smoother.reset()
+                mouse_smoother.reset()
                 size_baseline = None
                 scroll_locked = False
+                was_pointing  = False
+                claw_ready    = True
+                mouse_active  = False
                 clear_field_count = 0
                 prev_x = prev_y = prev_time = None
 
@@ -359,7 +403,7 @@ def main(mode: str = "camera"):
             if show_window:
                 display_tick += 1
                 if display_tick % 2 == 0:
-                    draw_hud(frame, h, w, zoom_active, scroll_active, paused, direction, finger_states, fps, armed=armed)
+                    draw_hud(frame, h, w, zoom_active, scroll_active, mouse_active, paused, direction, finger_states, fps, armed=armed)
                     cv2.imshow("AR Hand Control — Windows", frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord('q'), 27):
@@ -370,6 +414,8 @@ def main(mode: str = "camera"):
                 # Service mode — print live status, check stop widget
                 if not armed and lm is not None:
                     label = "near face"
+                elif mouse_active:
+                    label = "MOUSE"
                 else:
                     label = "ZOOM" if zoom_active else ("SCROLL" if scroll_active else "idle")
                 print(f"\r[AR] {label:<10} | FPS {fps:4.0f} | {'PAUSED' if paused else 'active'}", end="", flush=True)

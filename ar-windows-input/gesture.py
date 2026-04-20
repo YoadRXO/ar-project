@@ -23,6 +23,15 @@ def is_fist(lm) -> bool:
     return count_extended(lm) == 0
 
 
+def is_mouse_mode(lm) -> bool:
+    """Only index finger extended — single-finger pointer mode."""
+    index_up  = lm[8].y  < lm[5].y   # index tip above MCP
+    middle_dn = lm[12].y > lm[9].y   # middle tip below MCP
+    ring_dn   = lm[16].y > lm[13].y
+    pinky_dn  = lm[20].y > lm[17].y
+    return index_up and middle_dn and ring_dn and pinky_dn
+
+
 def is_zoom_mode(lm) -> bool:
     """All 4 fingers extended (open palm) → zoom only."""
     s = get_extended_fingers(lm)
