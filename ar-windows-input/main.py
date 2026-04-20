@@ -57,7 +57,8 @@ CLEAR_ZONE_Y_MIN   = 0.25   # palm center y must be BELOW top 25% of frame (face
 CLEAR_FIELD_FRAMES = 8      # consecutive frames in clear zone before gestures arm
 
 # Mouse / pointer mode (index finger only)
-MOUSE_SMOOTH    = 0.35  # EMA alpha for cursor — higher = more responsive
+MOUSE_SMOOTH          = 0.35  # EMA alpha for cursor — higher = more responsive
+RIGHT_PINCH_MIN_FRAMES = 3   # consecutive frames middle-pinch must be held before firing
 MOUSE_MARGIN_X  = 0.20  # fraction of frame ignored on each side (left/right)
 MOUSE_MARGIN_Y  = 0.20  # fraction of frame ignored on top/bottom
 # The remaining centre region maps to the full screen, so smaller hand
@@ -221,6 +222,7 @@ def main(mode: str = "camera"):
     scroll_locked        = False
     left_pinch_ready     = True   # arms left-click;  resets when pinch releases
     right_pinch_ready    = True   # arms right-click; resets when middle-pinch releases
+    right_pinch_count    = 0      # consecutive frames middle-pinch is held
     mouse_active         = False
     direction = None
     dir_timer = 0.0
@@ -329,14 +331,16 @@ def main(mode: str = "camera"):
                         else:
                             left_pinch_ready = True
 
-                        # Right-click: thumb + middle pinch
+                        # Right-click: thumb + middle pinch held for min frames
                         if is_middle_pinch(lm):
-                            if right_pinch_ready:
+                            right_pinch_count = min(right_pinch_count + 1, RIGHT_PINCH_MIN_FRAMES)
+                            if right_pinch_count >= RIGHT_PINCH_MIN_FRAMES and right_pinch_ready:
                                 right_click()
                                 direction         = "right_click"
                                 dir_timer         = now
                                 right_pinch_ready = False
                         else:
+                            right_pinch_count = 0
                             right_pinch_ready = True
 
                         # Move cursor when neither pinch is active
@@ -398,6 +402,7 @@ def main(mode: str = "camera"):
                     # Not armed (hand near face) or paused — reset state
                     left_pinch_ready  = True
                     right_pinch_ready = True
+                    right_pinch_count = 0
                     size_baseline     = None
 
                 prev_x, prev_y = sx, sy
@@ -411,6 +416,7 @@ def main(mode: str = "camera"):
                 scroll_locked     = False
                 left_pinch_ready  = True
                 right_pinch_ready = True
+                right_pinch_count = 0
                 mouse_active      = False
                 clear_field_count = 0
                 prev_x = prev_y = prev_time = None

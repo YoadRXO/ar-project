@@ -44,7 +44,7 @@ def is_middle_pinch(lm) -> bool:
     """Thumb tip + middle tip close together — right-click.
     Middle finger must be reaching (not folded into fist) to avoid
     false positives when middle is resting near the palm in mouse mode."""
-    if lm[12].y > lm[9].y + 0.04:   # tip too far below MCP → finger is folded, not reaching
+    if lm[12].y > lm[9].y + 0.02:   # tip too far below MCP → finger is folded, not reaching
         return False
     dx = lm[4].x - lm[12].x
     dy = lm[4].y - lm[12].y
