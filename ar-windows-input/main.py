@@ -57,8 +57,9 @@ CLEAR_ZONE_Y_MIN   = 0.25   # palm center y must be BELOW top 25% of frame (face
 CLEAR_FIELD_FRAMES = 8      # consecutive frames in clear zone before gestures arm
 
 # Mouse / pointer mode (index finger only)
-MOUSE_SMOOTH          = 0.35  # EMA alpha for cursor — higher = more responsive
-RIGHT_PINCH_MIN_FRAMES = 3   # consecutive frames middle-pinch must be held before firing
+MOUSE_SMOOTH            = 0.35  # EMA alpha for cursor — higher = more responsive
+MOUSE_MODE_MIN_FRAMES   = 5    # consecutive frames of mouse gesture before mode activates
+RIGHT_PINCH_MIN_FRAMES  = 3    # consecutive frames middle-pinch must be held before firing
 MOUSE_MARGIN_X  = 0.20  # fraction of frame ignored on each side (left/right)
 MOUSE_MARGIN_Y  = 0.20  # fraction of frame ignored on top/bottom
 # The remaining centre region maps to the full screen, so smaller hand
@@ -220,6 +221,7 @@ def main(mode: str = "camera"):
     prev_x = prev_y = None
     prev_time = None
     scroll_locked        = False
+    mouse_mode_count     = 0      # consecutive frames is_mouse_mode is True
     left_pinch_ready     = True   # arms left-click;  resets when pinch releases
     right_pinch_ready    = True   # arms right-click; resets when middle-pinch releases
     right_pinch_count    = 0      # consecutive frames middle-pinch is held
@@ -291,9 +293,13 @@ def main(mode: str = "camera"):
                 gesture_armed = (clear_field_count >= CLEAR_FIELD_FRAMES)
 
                 # Mouse mode: only index finger extended → cursor follows fingertip.
-                # Pinch once  → left-click.
-                # Pinch twice within DOUBLE_PINCH_WINDOW → right-click.
-                mouse_active = is_mouse_mode(lm)
+                # Debounce: must hold the gesture for MOUSE_MODE_MIN_FRAMES before
+                # activating, so brief dips during scroll tilt don't hijack the mode.
+                if is_mouse_mode(lm):
+                    mouse_mode_count = min(mouse_mode_count + 1, MOUSE_MODE_MIN_FRAMES)
+                else:
+                    mouse_mode_count = 0
+                mouse_active = (mouse_mode_count >= MOUSE_MODE_MIN_FRAMES)
 
                 # Mouse mode takes priority — skip scroll/zoom when active.
                 if not mouse_active:
@@ -400,6 +406,7 @@ def main(mode: str = "camera"):
 
                 else:
                     # Not armed (hand near face) or paused — reset state
+                    mouse_mode_count  = 0
                     left_pinch_ready  = True
                     right_pinch_ready = True
                     right_pinch_count = 0
@@ -414,6 +421,7 @@ def main(mode: str = "camera"):
                 mouse_smoother.reset()
                 size_baseline = None
                 scroll_locked     = False
+                mouse_mode_count  = 0
                 left_pinch_ready  = True
                 right_pinch_ready = True
                 right_pinch_count = 0

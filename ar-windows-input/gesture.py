@@ -24,9 +24,10 @@ def is_fist(lm) -> bool:
 
 
 def is_mouse_mode(lm) -> bool:
-    """Only index finger extended — single-finger pointer mode."""
-    index_up  = lm[8].y  < lm[5].y   # index tip above MCP
-    middle_dn = lm[12].y > lm[9].y   # middle tip below MCP
+    """Only index finger extended — single-finger pointer mode.
+    Middle must be clearly folded (not just dipping during a scroll tilt)."""
+    index_up  = lm[8].y  < lm[5].y            # index tip above MCP
+    middle_dn = lm[12].y > lm[9].y  + 0.06    # middle tip clearly below MCP
     ring_dn   = lm[16].y > lm[13].y
     pinky_dn  = lm[20].y > lm[17].y
     return index_up and middle_dn and ring_dn and pinky_dn
