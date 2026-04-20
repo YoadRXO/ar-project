@@ -33,11 +33,23 @@ def is_mouse_mode(lm) -> bool:
 
 
 def is_pinch(lm) -> bool:
-    """Thumb tip and index tip close together — right-click trigger."""
+    """Thumb tip + index tip clearly touching — left-click."""
     dx = lm[4].x - lm[8].x
     dy = lm[4].y - lm[8].y
     dist = math.sqrt(dx * dx + dy * dy)
-    return (dist / get_hand_size(lm)) < 0.35
+    return (dist / get_hand_size(lm)) < 0.22
+
+
+def is_middle_pinch(lm) -> bool:
+    """Thumb tip + middle tip close together — right-click.
+    Middle finger must be reaching (not folded into fist) to avoid
+    false positives when middle is resting near the palm in mouse mode."""
+    if lm[12].y > lm[9].y + 0.04:   # tip too far below MCP → finger is folded, not reaching
+        return False
+    dx = lm[4].x - lm[12].x
+    dy = lm[4].y - lm[12].y
+    dist = math.sqrt(dx * dx + dy * dy)
+    return (dist / get_hand_size(lm)) < 0.45
 
 
 def is_zoom_mode(lm) -> bool:

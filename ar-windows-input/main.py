@@ -29,7 +29,7 @@ from mediapipe.tasks.python import vision
 from win_input import scroll_vertical, scroll_horizontal, zoom, move_mouse, left_click, right_click, get_screen_size
 from smoother import PositionSmoother, EMA  # EMA still used for size_smoother
 from gesture import (
-    get_extended_fingers, is_scroll_mode, is_zoom_mode, is_fist, is_mouse_mode, is_pinch,
+    get_extended_fingers, is_scroll_mode, is_zoom_mode, is_fist, is_mouse_mode, is_pinch, is_middle_pinch,
     get_palm_center, get_two_finger_center, get_hand_size,
     get_two_finger_curl, get_horizontal_tilt,
     FINGER_CONNECTIONS, FINGER_COLORS_BGR, FINGER_NAMES,
@@ -57,8 +57,11 @@ CLEAR_ZONE_Y_MIN   = 0.25   # palm center y must be BELOW top 25% of frame (face
 CLEAR_FIELD_FRAMES = 8      # consecutive frames in clear zone before gestures arm
 
 # Mouse / pointer mode (index finger only)
-MOUSE_SMOOTH   = 0.35   # EMA alpha for cursor — higher = more responsive
-PINCH_WINDOW   = 0.45   # seconds within which a second pinch counts as right-click
+MOUSE_SMOOTH    = 0.35  # EMA alpha for cursor — higher = more responsive
+MOUSE_MARGIN_X  = 0.20  # fraction of frame ignored on each side (left/right)
+MOUSE_MARGIN_Y  = 0.20  # fraction of frame ignored on top/bottom
+# The remaining centre region maps to the full screen, so smaller hand
+# movements reach the screen edges.
 # ─────────────────────────────────────────────────────────────────────────────
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "hand_landmarker.task")
@@ -215,10 +218,10 @@ def main(mode: str = "camera"):
 
     prev_x = prev_y = None
     prev_time = None
-    scroll_locked   = False
-    pinch_ready     = True   # True = a new pinch-start can be detected
-    last_pinch_time = 0.0    # timestamp of last pinch; used for double-pinch detection
-    mouse_active    = False
+    scroll_locked        = False
+    left_pinch_ready     = True   # arms left-click;  resets when pinch releases
+    right_pinch_ready    = True   # arms right-click; resets when middle-pinch releases
+    mouse_active         = False
     direction = None
     dir_timer = 0.0
     paused = False
@@ -316,22 +319,36 @@ def main(mode: str = "camera"):
                 if not paused and gesture_armed:
                     # ── INDEX ONLY → Mouse pointer / click ─────────────────
                     if mouse_active:
+                        # Left-click: thumb + index pinch
                         if is_pinch(lm):
-                            if pinch_ready:
-                                if now - last_pinch_time < PINCH_WINDOW:
-                                    right_click()
-                                    direction       = "right_click"
-                                    last_pinch_time = 0.0
-                                else:
-                                    left_click()
-                                    direction       = "left_click"
-                                    last_pinch_time = now
-                                pinch_ready = False
-                                dir_timer   = now
+                            if left_pinch_ready:
+                                left_click()
+                                direction        = "left_click"
+                                dir_timer        = now
+                                left_pinch_ready = False
                         else:
-                            pinch_ready = True
+                            left_pinch_ready = True
+
+                        # Right-click: thumb + middle pinch
+                        if is_middle_pinch(lm):
+                            if right_pinch_ready:
+                                right_click()
+                                direction         = "right_click"
+                                dir_timer         = now
+                                right_pinch_ready = False
+                        else:
+                            right_pinch_ready = True
+
+                        # Move cursor when neither pinch is active
+                        if not is_pinch(lm) and not is_middle_pinch(lm):
                             mx, my = mouse_smoother.update(lm[8].x, lm[8].y)
-                            move_mouse(int(mx * screen_w), int(my * screen_h))
+                            # Map the centre zone to the full screen so the
+                            # cursor reaches edges without extreme hand movement
+                            sx = (mx - MOUSE_MARGIN_X) / (1.0 - 2 * MOUSE_MARGIN_X)
+                            sy = (my - MOUSE_MARGIN_Y) / (1.0 - 2 * MOUSE_MARGIN_Y)
+                            sx = max(0.0, min(1.0, sx))
+                            sy = max(0.0, min(1.0, sy))
+                            move_mouse(int(sx * screen_w), int(sy * screen_h))
 
                     # ── OPEN PALM → Zoom only ──────────────────────────────
                     elif zoom_active:
@@ -379,9 +396,9 @@ def main(mode: str = "camera"):
 
                 else:
                     # Not armed (hand near face) or paused — reset state
-                    pinch_ready     = True
-                    last_pinch_time = 0.0
-                    size_baseline   = None
+                    left_pinch_ready  = True
+                    right_pinch_ready = True
+                    size_baseline     = None
 
                 prev_x, prev_y = sx, sy
                 prev_time = now
@@ -391,10 +408,10 @@ def main(mode: str = "camera"):
                 size_smoother.reset()
                 mouse_smoother.reset()
                 size_baseline = None
-                scroll_locked   = False
-                pinch_ready     = True
-                last_pinch_time = 0.0
-                mouse_active    = False
+                scroll_locked     = False
+                left_pinch_ready  = True
+                right_pinch_ready = True
+                mouse_active      = False
                 clear_field_count = 0
                 prev_x = prev_y = prev_time = None
 
